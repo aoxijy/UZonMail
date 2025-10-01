@@ -1,0 +1,252 @@
+name: Build UZonMail
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  release:
+    types: [ published ]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  NODE_VERSION: '18.x'
+
+jobs:
+  build-windows-desktop:
+    runs-on: windows-latest
+    name: Build Windows Desktop
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
+
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
+
+    - name: Build Windows Desktop
+      working-directory: ./scripts
+      shell: pwsh
+      run: |
+        ./build-desktop.ps1
+
+    - name: Check Windows Desktop artifacts
+      run: |
+        echo "Windows Desktop build files:"
+        ls -la build/ || echo "No build directory found"
+
+    - name: Upload Windows Desktop Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-desktop-windows
+        path: build/uzonmail-desktop-win-x64-*.zip
+        retention-days: 30
+        if-no-files-found: error
+
+  build-windows-server:
+    runs-on: windows-latest
+    name: Build Windows Server
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
+
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
+
+    - name: Build Windows Server
+      working-directory: ./scripts
+      shell: pwsh
+      run: |
+        ./build-win-server.ps1
+
+    - name: Check Windows Server artifacts
+      run: |
+        echo "Windows Server build files:"
+        ls -la build/ || echo "No build directory found"
+
+    - name: Upload Windows Server Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-server-windows
+        path: build/uzonmail-service-win-x64-*.zip
+        retention-days: 30
+        if-no-files-found: error
+
+  build-linux-server:
+    runs-on: ubuntu-latest
+    name: Build Linux Server
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
+
+    - name: Install basic dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y p7zip-full curl
+
+    - name: Install PowerShell
+      run: |
+        # 安装 PowerShell for Linux
+        curl -L -o /tmp/powershell.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.1/powershell-7.4.1-linux-x64.tar.gz
+        sudo mkdir -p /opt/microsoft/powershell/7
+        sudo tar zxf /tmp/powershell.tar.gz -C /opt/microsoft/powershell/7
+        sudo chmod +x /opt/microsoft/powershell/7/pwsh
+        sudo ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
+
+    - name: Debug - Check scripts directory
+      run: |
+        echo "=== Scripts directory contents ==="
+        ls -la scripts/
+        echo "=== Checking build-linux.ps1 ==="
+        if [ -f "scripts/build-linux.ps1" ]; then
+          echo "build-linux.ps1 exists"
+          cat scripts/build-linux.ps1 | head -20
+        else
+          echo "ERROR: build-linux.ps1 not found!"
+          find . -name "*.ps1" -type f
+        fi
+
+    - name: Build Linux Server
+      working-directory: ./scripts
+      run: |
+        echo "=== Starting Linux build ==="
+        pwsh -File ./build-linux.ps1
+        echo "=== Build completed ==="
+
+    - name: Debug - Check build results
+      run: |
+        echo "=== Build directory contents ==="
+        ls -la build/ || echo "Build directory not found"
+        echo "=== All files in build directory ==="
+        find build/ -type f 2>/dev/null || echo "No build files found"
+        echo "=== Current directory structure ==="
+        ls -la
+
+    - name: Find and prepare Linux artifacts
+      id: find-linux-artifacts
+      run: |
+        echo "=== Searching for Linux artifacts ==="
+        # 查找可能的Linux构建产物
+        find . -name "*.zip" -type f | grep -i linux || echo "No Linux zip files found"
+        find . -name "*.tar.gz" -type f | grep -i linux || echo "No Linux tar.gz files found"
+        find build/ -name "*linux*" -type f 2>/dev/null || echo "No Linux files in build directory"
+        
+        # 检查build目录内容
+        if [ -d "build" ]; then
+          echo "Build directory exists, contents:"
+          ls -la build/
+          # 重命名Linux文件以匹配预期模式
+          for file in build/*linux*; do
+            if [ -f "$file" ]; then
+              echo "Found Linux file: $file"
+              # 如果文件名不匹配预期模式，重命名它
+              if [[ "$file" != *"uzonmail-linux-x64-"* ]]; then
+                NEW_NAME="build/uzonmail-linux-x64-$(date +%Y%m%d).zip"
+                echo "Renaming $file to $NEW_NAME"
+                cp "$file" "$NEW_NAME"
+              fi
+            fi
+          done
+        fi
+
+    - name: Upload Linux Server Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-server-linux
+        path: |
+          build/uzonmail-linux-x64-*.zip
+          build/*linux*.zip
+        retention-days: 30
+        if-no-files-found: warn
+
+  create-release:
+    runs-on: ubuntu-latest
+    name: Create Release
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [build-windows-desktop, build-windows-server, build-linux-server]
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: List downloaded files
+      run: |
+        echo "=== Downloaded artifacts ==="
+        find ./artifacts -type f -name "*.zip" -o -name "*.tar.gz" | while read file; do
+          echo "Found: $file"
+          ls -la "$file"
+        done
+
+    - name: Upload to Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ./artifacts/**/*
+        tag: ${{ github.ref }}
+        overwrite: true
+        file_glob: true
