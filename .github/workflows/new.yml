@@ -1,0 +1,84 @@
+name: Build UZonMail Service - Multi Platform
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.x'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'yarn'
+        cache-dependency-path: ui-src/yarn.lock
+        
+    - name: Install dependencies
+      run: |
+        cd ui-src
+        yarn install
+        
+    - name: Build frontend
+      run: |
+        cd ui-src
+        yarn build
+        
+    - name: Build backend for Linux
+      run: |
+        cd backend-src/UZonMailService
+        dotnet publish -c Release -o ../../build/service-linux-x64 -r linux-x64 --self-contained false /nowarn:CS8600,CS8601,CS8602,CS8603,CS8604,CS8618,CS8625
+        
+    - name: Build backend for Windows
+      run: |
+        cd backend-src/UZonMailService
+        dotnet publish -c Release -o ../../build/service-windows-x64 -r win-x64 --self-contained true /nowarn:CS8600,CS8601,CS8602,CS8603,CS8604,CS8618,CS8625
+        
+    - name: Prepare Linux package
+      run: |
+        New-Item -ItemType Directory -Path "build/service-linux-x64/public" -Force
+        New-Item -ItemType Directory -Path "build/service-linux-x64/wwwroot" -Force
+        New-Item -ItemType Directory -Path "build/service-linux-x64/Quartz" -Force
+        Copy-Item -Path "backend-src/UZonMailService/Quartz/quartz-sqlite.sqlite3" -Destination "build/service-linux-x64/Quartz/quartz-sqlite.sqlite3" -Force
+        Copy-Item -Path "ui-src/dist/spa/*" -Destination "build/service-linux-x64/wwwroot/" -Recurse -Force
+        
+    - name: Prepare Windows package
+      run: |
+        New-Item -ItemType Directory -Path "build/service-windows-x64/public" -Force
+        New-Item -ItemType Directory -Path "build/service-windows-x64/wwwroot" -Force
+        New-Item -ItemType Directory -Path "build/service-windows-x64/Quartz" -Force
+        Copy-Item -Path "backend-src/UZonMailService/Quartz/quartz-sqlite.sqlite3" -Destination "build/service-windows-x64/Quartz/quartz-sqlite.sqlite3" -Force
+        Copy-Item -Path "ui-src/dist/spa/*" -Destination "build/service-windows-x64/wwwroot/" -Recurse -Force
+        
+    - name: Install 7zip
+      run: choco install 7zip -y
+      
+    - name: Create Linux package
+      run: |
+        $version = (Get-Item "build/service-linux-x64/UZonMailService.dll").VersionInfo.FileVersion
+        7z a -tzip "build/uzonmail-service-linux-x64-$version.zip" "build/service-linux-x64/*"
+        
+    - name: Create Windows package
+      run: |
+        $version = (Get-Item "build/service-windows-x64/UZonMailService.dll").VersionInfo.FileVersion
+        7z a -tzip "build/uzonmail-service-windows-x64-$version.zip" "build/service-windows-x64/*"
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-service-packages
+        path: |
+          build/uzonmail-service-linux-x64-*.zip
+          build/uzonmail-service-windows-x64-*.zip
