@@ -352,51 +352,6 @@ export const dynamicRoutes: ExtendedRouteRecordRaw[] = [
         component: () => import('pages/systemSetting/license/LicenseManager.vue')
       }
     ]
-  },
-  {
-    name: 'Sponsor',
-    path: '/sponsor',
-    component: NormalLayout,
-    meta: {
-      label: '支持作者',
-      icon: 'thumb_up',
-      denies: ['professional', 'enterprise']
-    },
-    redirect: '/sponsor/author',
-    children: [
-      {
-        name: 'SponsorAuthor',
-        path: 'author',
-        meta: {
-          icon: 'thumb_up',
-          label: '支持作者',
-          noTag: true
-        },
-        component: () => import('pages/sponsor/sponsorAuthor.vue')
-      }
-    ]
-  },
-  {
-    name: 'Help',
-    path: '/help',
-    component: NormalLayout,
-    meta: {
-      label: '帮助文档',
-      icon: 'settings_suggest'
-    },
-    redirect: '/help/start-guide',
-    children: [
-      {
-        name: 'StartGuide',
-        path: 'start-guide',
-        component: () => import('pages/help/StartGuide.vue'),
-        meta: {
-          icon: 'tips_and_updates',
-          label: '使用说明',
-          noTag: true
-        }
-      }
-    ]
   }
 ]
 
