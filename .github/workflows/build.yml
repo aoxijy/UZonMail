@@ -122,11 +122,33 @@ jobs:
         cache: 'yarn'
         cache-dependency-path: 'ui-src/yarn.lock'
 
-    - name: Install dependencies
+    - name: Install Docker and dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full docker.io
+        
+        # 安装基础依赖
+        sudo apt-get install -y p7zip-full ca-certificates curl gnupg lsb-release
+        
+        # 清理可能冲突的容器相关包
+        sudo apt-get remove -y containerd docker docker-engine docker.io runc || true
+        
+        # 添加 Docker 官方 GPG 密钥
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        
+        # 添加 Docker 仓库
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # 更新包列表并安装 Docker
+        sudo apt-get update
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        
+        # 启动 Docker 服务
         sudo systemctl start docker
+        sudo systemctl enable docker
+        
+        # 将当前用户添加到 docker 组（在 CI 环境中可能不需要）
+        sudo usermod -aG docker $USER || true
 
     - name: Install Yarn
       run: |
@@ -140,6 +162,8 @@ jobs:
     - name: Build Linux Server
       working-directory: ./scripts
       run: |
+        # 确保 PowerShell 可用
+        sudo apt-get install -y powershell || true
         pwsh ./build-linux.ps1
 
     - name: Upload Linux Server Artifact
