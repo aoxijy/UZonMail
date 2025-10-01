@@ -19,8 +19,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -32,6 +30,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
 
     - name: Install 7-Zip
       run: |
@@ -40,6 +39,11 @@ jobs:
     - name: Install Yarn
       run: |
         npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
 
     - name: Build Windows Desktop
       working-directory: ./scripts
@@ -60,8 +64,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -73,6 +75,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
 
     - name: Install 7-Zip
       run: |
@@ -81,6 +84,11 @@ jobs:
     - name: Install Yarn
       run: |
         npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
 
     - name: Build Windows Server
       working-directory: ./scripts
@@ -101,8 +109,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -114,17 +120,22 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
+        cache-dependency-path: 'ui-src/yarn.lock'
 
     - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y p7zip-full docker.io
         sudo systemctl start docker
-        sudo usermod -aG docker $USER
 
     - name: Install Yarn
       run: |
         npm install -g yarn
+
+    - name: Install frontend dependencies
+      working-directory: ./ui-src
+      run: |
+        yarn install --frozen-lockfile
 
     - name: Build Linux Server
       working-directory: ./scripts
