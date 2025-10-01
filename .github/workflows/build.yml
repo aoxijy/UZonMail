@@ -1,4 +1,4 @@
-name: Build UZonMail - All Platforms
+name: Build UZonMail - All Platforms (No Docker)
 
 on:
   push:
@@ -13,7 +13,7 @@ env:
 
 jobs:
   build-all:
-    name: Build All Platforms
+    name: Build All Platforms (No Docker)
     runs-on: windows-latest
     
     steps:
@@ -37,7 +37,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock  # ← 添加这行
+        cache-dependency-path: ui-src/yarn.lock
         
     - name: Install Yarn globally
       run: npm install -g yarn
@@ -53,11 +53,15 @@ jobs:
         7z
         git --version
         
-    - name: Run build-all script
+    - name: Run build-all script (skip upload)
       shell: pwsh
       working-directory: ./scripts
       run: |
+        # 临时禁用 od 命令，跳过上传步骤
+        $originalPath = $env:PATH
+        $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'od' }) -join ';'
         ./build-all.ps1
+        $env:PATH = $originalPath
         
     - name: List build artifacts
       shell: pwsh
@@ -74,15 +78,88 @@ jobs:
     - name: Upload all build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-all-platforms
+        name: uzonmail-all-platforms-no-docker
         path: |
           ./build/*.zip
-          ./build/*.tar.gz
         retention-days: 30
         if-no-files-found: error
 
-  build-linux-and-docker:
-    name: Build Linux and Docker
+  build-desktop-only:
+    name: Build Desktop Only
+    runs-on: windows-latest
+    if: false  # 默认禁用，可通过手动触发选择
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: ui-src/yarn.lock
+        
+    - name: Install 7zip
+      run: choco install 7zip -y
+      
+    - name: Run desktop build script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        ./build-desktop.ps1
+        
+    - name: Upload desktop artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-desktop
+        path: ./build/uzonmail-desktop-win-x64-*.zip
+        retention-days: 30
+
+  build-windows-server-only:
+    name: Build Windows Server Only
+    runs-on: windows-latest
+    if: false  # 默认禁用，可通过手动触发选择
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET 9.0 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: ui-src/yarn.lock
+        
+    - name: Install 7zip
+      run: choco install 7zip -y
+      
+    - name: Run windows server build script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        ./build-win-server.ps1
+        
+    - name: Upload windows server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-windows-server
+        path: ./build/uzonmail-service-win-x64-*.zip
+        retention-days: 30
+
+  build-linux-only:
+    name: Build Linux Only (No Docker)
     runs-on: ubuntu-latest
     
     steps:
@@ -99,7 +176,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock  # ← 同样添加这行
+        cache-dependency-path: ui-src/yarn.lock
         
     - name: Install Yarn globally
       run: npm install -g yarn
@@ -107,34 +184,16 @@ jobs:
     - name: Install 7zip on Linux
       run: sudo apt-get update && sudo apt-get install -y p7zip-full
       
-    - name: Setup Docker Buildx
-      uses: docker/setup-buildx-action@v3
-      
-    - name: Run linux build script
+    - name: Run linux build script (no docker)
       shell: pwsh
       working-directory: ./scripts
       run: |
-        ./build-linux.ps1
+        # 修改参数，跳过 docker 构建
+        . ./build-core.ps1 -platform linux -rebuildFrontend $false -docker $false
         
-    - name: List Docker images
-      run: docker images
-      
     - name: Upload linux server artifact
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-linux-server
         path: ./build/uzonmail-linux-x64-*.zip
-        retention-days: 30
-        
-    - name: Save Docker image
-      run: |
-        docker save uzon-mail:latest -o uzonmail-docker-latest.tar
-        ls -la
-      working-directory: ./build
-      
-    - name: Upload Docker image artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: uzonmail-docker-image
-        path: ./build/uzonmail-docker-latest.tar
         retention-days: 30
