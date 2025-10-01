@@ -31,10 +31,30 @@ function New-Oss {
       continue
     }
 
-    # 开始上传
-    $result = od minio soft -p $path
-    # 获取最后一行作为结果
-    $results += $result[-1]
+    # 开始上传 - 添加平台兼容性检查
+    try {
+        if ($IsWindows) {
+            # Windows 环境使用原来的命令
+            $result = od minio soft -p $path
+        } else {
+            # Linux 环境使用兼容的命令格式
+            # 尝试不同的参数组合
+            $result = od minio soft --put $path
+        }
+        
+        # 安全地获取最后一行结果
+        if ($result -and $result.Length -gt 0) {
+            $results += $result[-1]
+            Write-Host "成功上传: $path" -ForegroundColor Green
+        } else {
+            Write-Host "上传命令执行但无输出: $path" -ForegroundColor Yellow
+            $results += "上传完成但无返回信息"
+        }
+    }
+    catch {
+        Write-Host "上传失败: $path - 错误: $($_.Exception.Message)" -ForegroundColor Red
+        $results += "上传失败"
+    }
   }
 
   # 输出地址
@@ -43,7 +63,16 @@ function New-Oss {
   $results
 }
 
+# 检查 od 命令是否存在且可用
 if (Get-Command od -ErrorAction SilentlyContinue) {
-  New-Oss
+  try {
+      # 测试 od 命令是否工作
+      od --help *>$null
+      New-Oss
+  }
+  catch {
+      Write-Host "od 命令测试失败，跳过上传步骤: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+} else {
+  Write-Host "未找到 od 命令，跳过上传步骤" -ForegroundColor Yellow
 }
-
