@@ -1,70 +1,193 @@
-name: Build UZonMail Service
+name: Build UZonMail
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master ]
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  NODE_VERSION: '20.x'
 
 jobs:
-  build:
-    runs-on: windows-latest
+  build-all:
+    name: Build All Platforms
+    runs-on: windows-latest  # 使用Windows runner因为需要编译Windows版本
     
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
-      
+      with:
+        ref: master
+        
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.x'
+        dotnet-version: ${{ env.DOTNET_VERSION }}
         
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock
         
-    - name: Install dependencies
-      run: |
-        cd ui-src
-        yarn install
-        
-    - name: Build frontend
-      run: |
-        cd ui-src
-        yarn build
-        
-    - name: Build backend
-      run: |
-        cd backend-src/UZonMailService
-        dotnet publish -c Release -o ../../build/service-linux-x64 -r linux-x64 --self-contained false
-        
-    - name: Prepare directories
-      run: |
-        # 使用 PowerShell 方式创建目录，忽略已存在的错误
-        New-Item -ItemType Directory -Path "build/service-linux-x64/public" -Force
-        New-Item -ItemType Directory -Path "build/service-linux-x64/wwwroot" -Force
-        New-Item -ItemType Directory -Path "build/service-linux-x64/Quartz" -Force
-        Copy-Item -Path "backend-src/UZonMailService/Quartz/quartz-sqlite.sqlite3" -Destination "build/service-linux-x64/Quartz/quartz-sqlite.sqlite3" -Force
-        
-    - name: Copy frontend to backend
-      run: |
-        # 确保目标目录存在
-        New-Item -ItemType Directory -Path "build/service-linux-x64/wwwroot" -Force
-        Copy-Item -Path "ui-src/dist/spa/*" -Destination "build/service-linux-x64/wwwroot/" -Recurse -Force
-        
-    - name: Install 7zip
-      run: choco install 7zip -y
+    - name: Install yarn
+      run: npm install -g yarn
       
-    - name: Create package
+    - name: Verify tools
       run: |
-        $version = (Get-Item "build/service-linux-x64/UZonMailService.dll").VersionInfo.FileVersion
-        7z a -tzip "build/uzonmail-service-linux-x64-$version.zip" "build/service-linux-x64/*"
+        git --version
+        7z
+        dotnet --version
+        node --version
+        yarn --version
+        docker --version
         
-    - name: Upload artifact
+    - name: Run build-all script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        ./build-all.ps1
+        
+    - name: List build artifacts
+      shell: pwsh
+      run: |
+        Write-Host "Build artifacts:"
+        Get-ChildItem -Path ./build -Recurse | ForEach-Object { Write-Host $_.FullName }
+        
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-service-linux-x64
-        path: build/uzonmail-service-linux-x64-*.zip
+        name: uzonmail-build-artifacts
+        path: |
+          ./build/*.zip
+          ./build/*.tar.gz
+        retention-days: 30
+
+  build-desktop:
+    name: Build Desktop Only
+    runs-on: windows-latest
+    if: false  # 默认不运行，可通过workflow_dispatch选择
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: master
+        
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        
+    - name: Run build-desktop script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        ./build-desktop.ps1
+        
+    - name: Upload desktop artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-desktop
+        path: ./build/uzonmail-desktop-win-x64-*.zip
+        retention-days: 30
+
+  build-windows-server:
+    name: Build Windows Server
+    runs-on: windows-latest
+    if: false  # 默认不运行，可通过workflow_dispatch选择
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: master
+        
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        
+    - name: Run windows server build script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        ./build-win-server.ps1
+        
+    - name: Upload windows server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-windows-server
+        path: ./build/uzonmail-service-win-x64-*.zip
+        retention-days: 30
+
+  build-linux:
+    name: Build Linux and Docker
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: master
+        
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        
+    - name: Install yarn
+      run: npm install -g yarn
+      
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Run linux build script
+      shell: pwsh
+      working-directory: ./scripts
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y p7zip-full
+        ./build-linux.ps1
+        
+    - name: Upload linux artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-linux-server
+        path: ./build/uzonmail-linux-x64-*.zip
+        retention-days: 30
+        
+    - name: Upload docker image
+      if: success()
+      run: |
+        docker images
+        docker save uzon-mail:latest -o uzonmail-docker-image.tar
+      working-directory: ./build
+      
+    - name: Upload docker image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: uzonmail-docker-image
+        path: ./build/uzonmail-docker-image.tar
+        retention-days: 30
