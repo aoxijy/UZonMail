@@ -1,49 +1,56 @@
-name: Build UZonMail
+name: Build UZonMail - All Platforms
 
 on:
   push:
-    branches: [ master ]
+    branches: [master, main]
   pull_request:
-    branches: [ master ]
+    branches: [master, main]
   workflow_dispatch:  # 允许手动触发
 
 env:
   DOTNET_VERSION: '9.0.x'
-  NODE_VERSION: '20.x'
+  NODE_VERSION: '18.x'
 
 jobs:
   build-all:
     name: Build All Platforms
-    runs-on: windows-latest  # 使用Windows runner因为需要编译Windows版本
+    runs-on: windows-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        ref: master
+        fetch-depth: 0
         
-    - name: Setup .NET
+    - name: Switch to master branch
+      run: |
+        git checkout master
+        git branch
+      
+    - name: Setup .NET 9.0 SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
         
-    - name: Setup Node.js
+    - name: Setup Node.js and Yarn
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
         
-    - name: Install yarn
+    - name: Install Yarn globally
       run: npm install -g yarn
       
-    - name: Verify tools
+    - name: Install 7zip via Chocolatey
+      run: choco install 7zip -y
+      
+    - name: Verify installed tools
       run: |
-        git --version
-        7z
         dotnet --version
         node --version
         yarn --version
-        docker --version
+        7z
+        git --version
         
     - name: Run build-all script
       shell: pwsh
@@ -54,30 +61,35 @@ jobs:
     - name: List build artifacts
       shell: pwsh
       run: |
-        Write-Host "Build artifacts:"
-        Get-ChildItem -Path ./build -Recurse | ForEach-Object { Write-Host $_.FullName }
+        Write-Host "=== Build Artifacts ==="
+        if (Test-Path "./build") {
+          Get-ChildItem -Path ./build -Recurse -File | ForEach-Object { 
+            Write-Host "Found: $($_.FullName)" 
+          }
+        } else {
+          Write-Host "Build directory not found!"
+        }
         
-    - name: Upload build artifacts
+    - name: Upload all build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-build-artifacts
+        name: uzonmail-all-platforms
         path: |
           ./build/*.zip
           ./build/*.tar.gz
         retention-days: 30
+        if-no-files-found: error
 
-  build-desktop:
+  build-desktop-only:
     name: Build Desktop Only
     runs-on: windows-latest
-    if: false  # 默认不运行，可通过workflow_dispatch选择
+    if: false  # 默认禁用，可通过手动触发选择
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        ref: master
-        
-    - name: Setup .NET
+      
+    - name: Setup .NET 9.0 SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -86,9 +98,11 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
-        cache: 'yarn'
         
-    - name: Run build-desktop script
+    - name: Install 7zip
+      run: choco install 7zip -y
+      
+    - name: Run desktop build script
       shell: pwsh
       working-directory: ./scripts
       run: |
@@ -101,18 +115,16 @@ jobs:
         path: ./build/uzonmail-desktop-win-x64-*.zip
         retention-days: 30
 
-  build-windows-server:
-    name: Build Windows Server
+  build-windows-server-only:
+    name: Build Windows Server Only
     runs-on: windows-latest
-    if: false  # 默认不运行，可通过workflow_dispatch选择
+    if: false  # 默认禁用，可通过手动触发选择
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        ref: master
-        
-    - name: Setup .NET
+      
+    - name: Setup .NET 9.0 SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -121,8 +133,10 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
-        cache: 'yarn'
         
+    - name: Install 7zip
+      run: choco install 7zip -y
+      
     - name: Run windows server build script
       shell: pwsh
       working-directory: ./scripts
@@ -136,17 +150,15 @@ jobs:
         path: ./build/uzonmail-service-win-x64-*.zip
         retention-days: 30
 
-  build-linux:
+  build-linux-and-docker:
     name: Build Linux and Docker
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        ref: master
-        
-    - name: Setup .NET
+      
+    - name: Setup .NET 9.0 SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -155,39 +167,48 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
-        cache: 'yarn'
         
-    - name: Install yarn
+    - name: Install Yarn globally
       run: npm install -g yarn
+      
+    - name: Install 7zip on Linux
+      run: sudo apt-get update && sudo apt-get install -y p7zip-full
       
     - name: Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub (optional)
+      if: false  # 设置为true并添加credentials如需推送镜像
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
       
     - name: Run linux build script
       shell: pwsh
       working-directory: ./scripts
       run: |
-        sudo apt-get update
-        sudo apt-get install -y p7zip-full
         ./build-linux.ps1
         
-    - name: Upload linux artifact
+    - name: List Docker images
+      run: docker images
+      
+    - name: Upload linux server artifact
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-linux-server
         path: ./build/uzonmail-linux-x64-*.zip
         retention-days: 30
         
-    - name: Upload docker image
-      if: success()
+    - name: Save Docker image
       run: |
-        docker images
-        docker save uzon-mail:latest -o uzonmail-docker-image.tar
+        docker save uzon-mail:latest -o uzonmail-docker-latest.tar
+        ls -la
       working-directory: ./build
       
-    - name: Upload docker image artifact
+    - name: Upload Docker image artifact
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-docker-image
-        path: ./build/uzonmail-docker-image.tar
+        path: ./build/uzonmail-docker-latest.tar
         retention-days: 30
