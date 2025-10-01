@@ -1,199 +1,163 @@
-name: Build UZonMail - All Platforms (No Docker)
+name: Build UZonMail
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master ]
   pull_request:
-    branches: [master, main]
-  workflow_dispatch:
+    branches: [ master ]
+  release:
+    types: [ published ]
 
 env:
   DOTNET_VERSION: '9.0.x'
   NODE_VERSION: '18.x'
 
 jobs:
-  build-all:
-    name: Build All Platforms (No Docker)
+  build-windows-desktop:
     runs-on: windows-latest
-    
+    name: Build Windows Desktop
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        
-    - name: Switch to master branch
-      run: |
-        git checkout master
-        git branch
-      
-    - name: Setup .NET 9.0 SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
-        
-    - name: Setup Node.js and Yarn
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock
-        
-    - name: Install Yarn globally
-      run: npm install -g yarn
-      
-    - name: Install 7zip via Chocolatey
-      run: choco install 7zip -y
-      
-    - name: Verify installed tools
-      run: |
-        dotnet --version
-        node --version
-        yarn --version
-        7z
-        git --version
-        
-    - name: Run build-all script (skip upload)
-      shell: pwsh
-      working-directory: ./scripts
-      run: |
-        # 临时禁用 od 命令，跳过上传步骤
-        $originalPath = $env:PATH
-        $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'od' }) -join ';'
-        ./build-all.ps1
-        $env:PATH = $originalPath
-        
-    - name: List build artifacts
-      shell: pwsh
-      run: |
-        Write-Host "=== Build Artifacts ==="
-        if (Test-Path "./build") {
-          Get-ChildItem -Path ./build -Recurse -File | ForEach-Object { 
-            Write-Host "Found: $($_.FullName)" 
-          }
-        } else {
-          Write-Host "Build directory not found!"
-        }
-        
-    - name: Upload all build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: uzonmail-all-platforms-no-docker
-        path: |
-          ./build/*.zip
-        retention-days: 30
-        if-no-files-found: error
 
-  build-desktop-only:
-    name: Build Desktop Only
-    runs-on: windows-latest
-    if: false  # 默认禁用，可通过手动触发选择
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup .NET 9.0 SDK
+    - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
-        
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock
-        
-    - name: Install 7zip
-      run: choco install 7zip -y
-      
-    - name: Run desktop build script
-      shell: pwsh
+
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Build Windows Desktop
       working-directory: ./scripts
+      shell: pwsh
       run: |
         ./build-desktop.ps1
-        
-    - name: Upload desktop artifact
+
+    - name: Upload Windows Desktop Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-desktop
-        path: ./build/uzonmail-desktop-win-x64-*.zip
+        name: uzonmail-desktop-windows
+        path: build/uzonmail-desktop-win-x64-*.zip
         retention-days: 30
 
-  build-windows-server-only:
-    name: Build Windows Server Only
+  build-windows-server:
     runs-on: windows-latest
-    if: false  # 默认禁用，可通过手动触发选择
-    
+    name: Build Windows Server
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Setup .NET 9.0 SDK
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
-        
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock
-        
-    - name: Install 7zip
-      run: choco install 7zip -y
-      
-    - name: Run windows server build script
-      shell: pwsh
+
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Build Windows Server
       working-directory: ./scripts
+      shell: pwsh
       run: |
         ./build-win-server.ps1
-        
-    - name: Upload windows server artifact
+
+    - name: Upload Windows Server Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-windows-server
-        path: ./build/uzonmail-service-win-x64-*.zip
+        name: uzonmail-server-windows
+        path: build/uzonmail-service-win-x64-*.zip
         retention-days: 30
 
-  build-linux-only:
-    name: Build Linux Only (No Docker)
+  build-linux-server:
     runs-on: ubuntu-latest
-    
+    name: Build Linux Server
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Setup .NET 9.0 SDK
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
-        
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
-        cache-dependency-path: ui-src/yarn.lock
-        
-    - name: Install Yarn globally
-      run: npm install -g yarn
-      
-    - name: Install 7zip on Linux
-      run: sudo apt-get update && sudo apt-get install -y p7zip-full
-      
-    - name: Run linux build script (no docker)
-      shell: pwsh
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y p7zip-full docker.io
+        sudo systemctl start docker
+        sudo usermod -aG docker $USER
+
+    - name: Install Yarn
+      run: |
+        npm install -g yarn
+
+    - name: Build Linux Server
       working-directory: ./scripts
       run: |
-        # 修改参数，跳过 docker 构建
-        . ./build-core.ps1 -platform linux -rebuildFrontend $false -docker $false
-        
-    - name: Upload linux server artifact
+        pwsh ./build-linux.ps1
+
+    - name: Upload Linux Server Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: uzonmail-linux-server
-        path: ./build/uzonmail-linux-x64-*.zip
+        name: uzonmail-server-linux
+        path: build/uzonmail-linux-x64-*.zip
         retention-days: 30
+
+  create-release:
+    runs-on: ubuntu-latest
+    name: Create Release
+    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: [build-windows-desktop, build-windows-server, build-linux-server]
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: List downloaded files
+      run: |
+        find ./artifacts -type f -name "*.zip"
+
+    - name: Upload to Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ./artifacts/**/*.zip
+        tag: ${{ github.ref }}
+        overwrite: true
+        file_glob: true
