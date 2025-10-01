@@ -348,6 +348,7 @@ export const dynamicRoutes: ExtendedRouteRecordRaw[] = [
           access: ['admin'],
           denies: ['noProPlugin'],
           noTag: true
+          noMenu: true  // 添加这一行来隐藏菜单
         },
         component: () => import('pages/systemSetting/license/LicenseManager.vue')
       }
@@ -413,3 +414,4 @@ export const exceptionRoutes: ExtendedRouteRecordRaw[] = [
     component: () => import('pages/ErrorNotFound.vue')
   }
 ]
+
