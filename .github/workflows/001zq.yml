@@ -139,14 +139,26 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y p7zip-full curl
 
-    - name: Install PowerShell
+    - name: Check and Install PowerShell
       run: |
-        # 安装 PowerShell for Linux
-        curl -L -o /tmp/powershell.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.1/powershell-7.4.1-linux-x64.tar.gz
-        sudo mkdir -p /opt/microsoft/powershell/7
-        sudo tar zxf /tmp/powershell.tar.gz -C /opt/microsoft/powershell/7
-        sudo chmod +x /opt/microsoft/powershell/7/pwsh
-        sudo ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
+        # 检查是否已安装 PowerShell
+        if command -v pwsh &> /dev/null; then
+          echo "PowerShell is already installed:"
+          pwsh --version
+        else
+          echo "Installing PowerShell..."
+          # 安装 PowerShell for Linux
+          curl -L -o /tmp/powershell.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.1/powershell-7.4.1-linux-x64.tar.gz
+          sudo mkdir -p /opt/microsoft/powershell/7
+          sudo tar zxf /tmp/powershell.tar.gz -C /opt/microsoft/powershell/7
+          sudo chmod +x /opt/microsoft/powershell/7/pwsh
+          # 检查符号链接是否存在，如果存在则跳过创建
+          if [ ! -f /usr/bin/pwsh ]; then
+            sudo ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
+          else
+            echo "Symbolic link /usr/bin/pwsh already exists, skipping creation"
+          fi
+        fi
 
     - name: Install Yarn
       run: |
@@ -164,7 +176,8 @@ jobs:
         echo "=== Checking build-linux.ps1 ==="
         if [ -f "scripts/build-linux.ps1" ]; then
           echo "build-linux.ps1 exists"
-          cat scripts/build-linux.ps1 | head -20
+          echo "=== First 10 lines of build-linux.ps1 ==="
+          head -10 scripts/build-linux.ps1
         else
           echo "ERROR: build-linux.ps1 not found!"
           find . -name "*.ps1" -type f
@@ -174,43 +187,55 @@ jobs:
       working-directory: ./scripts
       run: |
         echo "=== Starting Linux build ==="
+        # 确保使用正确的 PowerShell
+        which pwsh
+        pwsh --version
+        # 执行构建脚本
         pwsh -File ./build-linux.ps1
         echo "=== Build completed ==="
 
     - name: Debug - Check build results
       run: |
         echo "=== Build directory contents ==="
-        ls -la build/ || echo "Build directory not found"
+        ls -la build/ 2>/dev/null || echo "Build directory not found"
         echo "=== All files in build directory ==="
         find build/ -type f 2>/dev/null || echo "No build files found"
         echo "=== Current directory structure ==="
         ls -la
+        echo "=== Searching for any zip files ==="
+        find . -name "*.zip" -type f 2>/dev/null || echo "No zip files found"
 
     - name: Find and prepare Linux artifacts
       id: find-linux-artifacts
       run: |
         echo "=== Searching for Linux artifacts ==="
-        # 查找可能的Linux构建产物
-        find . -name "*.zip" -type f | grep -i linux || echo "No Linux zip files found"
-        find . -name "*.tar.gz" -type f | grep -i linux || echo "No Linux tar.gz files found"
-        find build/ -name "*linux*" -type f 2>/dev/null || echo "No Linux files in build directory"
+        # 查找所有可能的构建产物
+        find . -name "*.zip" -type f 2>/dev/null | head -10
+        find . -name "*.tar.gz" -type f 2>/dev/null | head -10
         
         # 检查build目录内容
         if [ -d "build" ]; then
           echo "Build directory exists, contents:"
           ls -la build/
-          # 重命名Linux文件以匹配预期模式
-          for file in build/*linux*; do
-            if [ -f "$file" ]; then
-              echo "Found Linux file: $file"
-              # 如果文件名不匹配预期模式，重命名它
-              if [[ "$file" != *"uzonmail-linux-x64-"* ]]; then
-                NEW_NAME="build/uzonmail-linux-x64-$(date +%Y%m%d).zip"
-                echo "Renaming $file to $NEW_NAME"
-                cp "$file" "$NEW_NAME"
-              fi
+          # 查找Linux相关的文件
+          LINUX_FILES=$(find build/ -name "*linux*" -type f 2>/dev/null || echo "")
+          if [ -n "$LINUX_FILES" ]; then
+            echo "Found Linux files:"
+            echo "$LINUX_FILES"
+            # 使用第一个找到的Linux文件作为产物
+            FIRST_FILE=$(echo "$LINUX_FILES" | head -1)
+            echo "Using file: $FIRST_FILE"
+            # 如果文件名不匹配预期模式，复制并重命名它
+            if [[ "$FIRST_FILE" != *"uzonmail-linux-x64-"* ]]; then
+              NEW_NAME="build/uzonmail-linux-x64-artifact.zip"
+              echo "Copying $FIRST_FILE to $NEW_NAME"
+              cp "$FIRST_FILE" "$NEW_NAME"
             fi
-          done
+          else
+            echo "No Linux-specific files found in build directory"
+          fi
+        else
+          echo "Build directory does not exist"
         fi
 
     - name: Upload Linux Server Artifact
@@ -219,6 +244,7 @@ jobs:
         name: uzonmail-server-linux
         path: |
           build/uzonmail-linux-x64-*.zip
+          build/uzonmail-linux-x64-artifact.zip
           build/*linux*.zip
         retention-days: 30
         if-no-files-found: warn
@@ -237,7 +263,7 @@ jobs:
     - name: List downloaded files
       run: |
         echo "=== Downloaded artifacts ==="
-        find ./artifacts -type f -name "*.zip" -o -name "*.tar.gz" | while read file; do
+        find ./artifacts -type f 2>/dev/null | while read file; do
           echo "Found: $file"
           ls -la "$file"
         done
