@@ -5,7 +5,7 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 env:
   DOTNET_VERSION: '9.0.x'
@@ -37,6 +37,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
+        cache-dependency-path: ui-src/yarn.lock  # ← 添加这行
         
     - name: Install Yarn globally
       run: npm install -g yarn
@@ -80,76 +81,6 @@ jobs:
         retention-days: 30
         if-no-files-found: error
 
-  build-desktop-only:
-    name: Build Desktop Only
-    runs-on: windows-latest
-    if: false  # 默认禁用，可通过手动触发选择
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup .NET 9.0 SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
-        
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        
-    - name: Install 7zip
-      run: choco install 7zip -y
-      
-    - name: Run desktop build script
-      shell: pwsh
-      working-directory: ./scripts
-      run: |
-        ./build-desktop.ps1
-        
-    - name: Upload desktop artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: uzonmail-desktop
-        path: ./build/uzonmail-desktop-win-x64-*.zip
-        retention-days: 30
-
-  build-windows-server-only:
-    name: Build Windows Server Only
-    runs-on: windows-latest
-    if: false  # 默认禁用，可通过手动触发选择
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup .NET 9.0 SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
-        
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        
-    - name: Install 7zip
-      run: choco install 7zip -y
-      
-    - name: Run windows server build script
-      shell: pwsh
-      working-directory: ./scripts
-      run: |
-        ./build-win-server.ps1
-        
-    - name: Upload windows server artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: uzonmail-windows-server
-        path: ./build/uzonmail-service-win-x64-*.zip
-        retention-days: 30
-
   build-linux-and-docker:
     name: Build Linux and Docker
     runs-on: ubuntu-latest
@@ -167,6 +98,8 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: ${{ env.NODE_VERSION }}
+        cache: 'yarn'
+        cache-dependency-path: ui-src/yarn.lock  # ← 同样添加这行
         
     - name: Install Yarn globally
       run: npm install -g yarn
@@ -176,13 +109,6 @@ jobs:
       
     - name: Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
-      
-    - name: Login to Docker Hub (optional)
-      if: false  # 设置为true并添加credentials如需推送镜像
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
       
     - name: Run linux build script
       shell: pwsh
