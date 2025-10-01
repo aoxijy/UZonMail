@@ -2,7 +2,7 @@
   "name": "uzon-mail",
   "version": "0.0.1",
   "description": "A app for sending emails",
-  "productName": "UZon Mail",
+  "productName": "YKS Mail",
   "author": "galens",
   "type": "module",
   "private": true,
