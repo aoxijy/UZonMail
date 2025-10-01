@@ -43,14 +43,17 @@ jobs:
         
     - name: Prepare directories
       run: |
-        mkdir -p build/service-linux-x64/public
-        mkdir -p build/service-linux-x64/wwwroot
-        mkdir -p build/service-linux-x64/Quartz
-        cp backend-src/UZonMailService/Quartz/quartz-sqlite.sqlite3 build/service-linux-x64/Quartz/
+        # 使用 PowerShell 方式创建目录，忽略已存在的错误
+        New-Item -ItemType Directory -Path "build/service-linux-x64/public" -Force
+        New-Item -ItemType Directory -Path "build/service-linux-x64/wwwroot" -Force
+        New-Item -ItemType Directory -Path "build/service-linux-x64/Quartz" -Force
+        Copy-Item -Path "backend-src/UZonMailService/Quartz/quartz-sqlite.sqlite3" -Destination "build/service-linux-x64/Quartz/quartz-sqlite.sqlite3" -Force
         
     - name: Copy frontend to backend
       run: |
-        cp -r ui-src/dist/spa/* build/service-linux-x64/wwwroot/
+        # 确保目标目录存在
+        New-Item -ItemType Directory -Path "build/service-linux-x64/wwwroot" -Force
+        Copy-Item -Path "ui-src/dist/spa/*" -Destination "build/service-linux-x64/wwwroot/" -Recurse -Force
         
     - name: Install 7zip
       run: choco install 7zip -y
@@ -58,7 +61,7 @@ jobs:
     - name: Create package
       run: |
         $version = (Get-Item "build/service-linux-x64/UZonMailService.dll").VersionInfo.FileVersion
-        7z a -tzip build/uzonmail-service-linux-x64-$version.zip build/service-linux-x64/*
+        7z a -tzip "build/uzonmail-service-linux-x64-$version.zip" "build/service-linux-x64/*"
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
