@@ -4,11 +4,11 @@ import logger from 'loglevel'
 
 export function useSystemConfig () {
   const systemConfig: Ref<ISystemConfig> = ref({
-    name: '宇正群邮',
-    loginWelcome: 'Welcome to UZonMail',
+    name: '懿可仕邮件系统',
+    loginWelcome: 'Welcome to YiKeShiMail',
     icon: '',
-    copyright: '© 2023 UZonMail',
-    icpInfo: '粤ICP备2023000000号',
+    copyright: '© 2025 YKSMail',
+    icpInfo: '桂ICP备19005629号-4',
   })
 
   onMounted(async () => {
