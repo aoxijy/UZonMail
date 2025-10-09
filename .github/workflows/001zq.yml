@@ -125,9 +125,7 @@ jobs:
     - name: Install 7zip and PowerShell
       run: |
         sudo apt-get update
-        # 安装7zip
         sudo apt-get install -y p7zip-full p7zip-rar
-        # 安装PowerShell
         sudo apt-get install -y wget
         wget -q https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb
         sudo dpkg -i packages-microsoft-prod.deb
@@ -146,39 +144,54 @@ jobs:
 
     - name: Create 7z.exe wrapper for Linux
       run: |
-        # 创建一个7z.exe的包装器，让PowerShell可以找到7z
         echo '#!/bin/bash' | sudo tee /usr/local/bin/7z.exe
         echo '/usr/bin/7z "$@"' | sudo tee -a /usr/local/bin/7z.exe
         sudo chmod +x /usr/local/bin/7z.exe
-        echo "7z.exe wrapper created at /usr/local/bin/7z.exe"
 
-    - name: Debug - Check environment
+    - name: Debug - Check project structure
       run: |
-        echo "=== Environment Check ==="
-        echo "7z path: $(which 7z)"
-        7z --version || echo "7z not found"
-        echo "7z.exe wrapper: $(which 7z.exe || echo 'not found')"
-        echo "PowerShell: $(which pwsh || echo 'not found')"
+        echo "=== 项目结构检查 ==="
+        echo "backend-src 目录内容:"
+        ls -la backend-src/ || echo "backend-src 目录不存在"
+        echo "Plugins 目录内容:"
+        ls -la backend-src/Plugins/ 2>/dev/null || echo "Plugins 目录不存在"
+        echo "UZonMailCorePlugin 项目文件:"
+        find backend-src/ -name "*.csproj" -type f | head -10
+
+    - name: Try solution build first
+      working-directory: ./backend-src
+      run: |
+        echo "=== 尝试构建解决方案 ==="
+        # 查找解决方案文件
+        SOLUTIONS=$(find . -name "*.sln" -type f | head -5)
+        if [ -n "$SOLUTIONS" ]; then
+          echo "找到解决方案文件:"
+          echo "$SOLUTIONS"
+          # 使用第一个找到的解决方案
+          FIRST_SOLUTION=$(echo "$SOLUTIONS" | head -1)
+          echo "使用解决方案: $FIRST_SOLUTION"
+          # 恢复 NuGet 包
+          dotnet restore "$FIRST_SOLUTION" || echo "NuGet 包恢复失败"
+          # 尝试构建
+          dotnet build "$FIRST_SOLUTION" --configuration Release --verbosity normal || echo "解决方案构建失败"
+        else
+          echo "未找到解决方案文件"
+          # 尝试直接构建 UZonMailService
+          dotnet build "UZonMailService/UZonMailService.csproj" --configuration Release --verbosity normal || echo "UZonMailService 构建失败"
+        fi
 
     - name: Build Linux Server
       working-directory: ./scripts
       shell: pwsh
       run: |
-        Write-Host "=== Starting Linux build in PowerShell ==="
+        Write-Host "=== Starting Linux build ==="
         Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
-        Write-Host "Current directory: $(Get-Location)"
         
         Write-Host "=== Testing 7z access ==="
-        # 测试7z.exe包装器
         $7zResult = Get-Command "7z.exe" -ErrorAction SilentlyContinue
         if ($7zResult) {
             Write-Host "✓ 7z.exe found at: $($7zResult.Source)"
             & 7z.exe --version
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "✓ 7z.exe is working"
-            } else {
-                Write-Host "✗ 7z.exe test failed"
-            }
         } else {
             Write-Host "✗ 7z.exe not found"
         }
@@ -190,37 +203,40 @@ jobs:
         } catch {
             Write-Host "✗ Build failed: $($_.Exception.Message)"
             Write-Host "Error details: $($_.Exception.StackTrace)"
-            exit 1
+            # 即使失败也继续，看看是否有部分构建结果
+            Write-Host "继续执行以检查部分构建结果..."
         }
 
-    - name: Check build results
+    - name: Check build results even if failed
+      if: always()
       run: |
-        echo "=== Build directory contents ==="
+        echo "=== 检查构建结果（即使构建失败）==="
         if [ -d "build" ]; then
           echo "Build directory exists"
           ls -la build/
-          echo "=== All files in build directory ==="
+          echo "=== 所有构建文件 ==="
           find build/ -type f 2>/dev/null | while read file; do
             echo "Found: $file"
             ls -la "$file"
           done
         else
-          echo "ERROR: Build directory not found!"
-          echo "=== Current directory structure ==="
+          echo "Build directory not found"
+          echo "=== 当前目录结构 ==="
           ls -la
-          echo "=== Searching for any build artifacts ==="
+          echo "=== 搜索可能的构建产物 ==="
           find . -name "*.zip" -type f 2>/dev/null | head -20 || echo "No zip files found"
+          find . -name "*.tar.gz" -type f 2>/dev/null | head -20 || echo "No tar.gz files found"
         fi
 
     - name: Upload Linux Server Artifact
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-server-linux
         path: |
-          build/uzonmail-linux-x64-*.zip
-          build/uzonmail-service-linux-x64-*.zip
-          build/*linux*.zip
+          build/
           build/*.zip
+          build/*.tar.gz
         retention-days: 30
         if-no-files-found: warn
 
