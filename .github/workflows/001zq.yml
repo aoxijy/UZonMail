@@ -124,11 +124,13 @@ jobs:
         cache: 'yarn'
         cache-dependency-path: 'ui-src/yarn.lock'
 
-    - name: Install 7zip and PowerShell
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full p7zip-rar
-        sudo apt-get install -y wget
+        sudo apt-get install -y p7zip-full p7zip-rar wget
+
+    - name: Install PowerShell
+      run: |
         wget -q https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb
         sudo dpkg -i packages-microsoft-prod.deb
         sudo apt-get update
@@ -150,206 +152,62 @@ jobs:
         echo '/usr/bin/7z "$@"' | sudo tee -a /usr/local/bin/7z.exe
         sudo chmod +x /usr/local/bin/7z.exe
 
-    - name: Debug - Check project structure
-      run: |
-        echo "=== 项目结构检查 ==="
-        echo "当前目录: $(pwd)"
-        echo "所有文件和目录:"
-        ls -la
-        echo "backend-src 目录内容:"
-        ls -la backend-src/ || echo "backend-src 目录不存在"
-        echo "查找 UzonMailDB 项目:"
-        find . -name "UzonMailDB.csproj" -type f 2>/dev/null || echo "未找到 UzonMailDB.csproj"
-        echo "查找所有 .csproj 文件:"
-        find . -name "*.csproj" -type f 2>/dev/null | head -20
-
-    - name: Fix missing UzonMailDB reference
-      run: |
-        echo "=== 尝试修复 UzonMailDB 引用 ==="
-        # 检查 UzonMailDB 项目是否存在
-        if [ ! -f "UzonMailDB/UzonMailDB.csproj" ]; then
-          echo "UzonMailDB 项目不存在，尝试从其他地方复制或创建"
-          # 尝试在根目录创建 UzonMailDB 目录
-          mkdir -p UzonMailDB
-          # 检查是否有其他位置的 UzonMailDB
-          DB_LOCATION=$(find . -name "UzonMailDB.csproj" -type f 2>/dev/null | head -1)
-          if [ -n "$DB_LOCATION" ]; then
-            echo "在其他位置找到 UzonMailDB: $DB_LOCATION"
-            DB_DIR=$(dirname "$DB_LOCATION")
-            # 复制到期望的位置
-            cp -r "$DB_DIR"/* UzonMailDB/ 2>/dev/null || echo "复制失败，继续构建"
-          else
-            echo "未找到 UzonMailDB 项目，继续构建"
-          fi
-        else
-          echo "UzonMailDB 项目已存在"
-        fi
-
-    - name: Restore NuGet packages
-      run: |
-        echo "=== 恢复 NuGet 包 ==="
-        # 查找并恢复所有项目的 NuGet 包
-        find . -name "*.csproj" -type f | while read proj; do
-          echo "恢复项目: $proj"
-          dotnet restore "$proj" --verbosity quiet || echo "恢复 $proj 失败"
-        done
-
-    - name: Build only main service (skip plugins)
+    - name: Build main service only
       working-directory: ./backend-src
       run: |
-        echo "=== 仅构建主服务（跳过插件）==="
-        # 只构建主要的 UZonMailService，跳过有问题的插件
+        echo "=== 构建主服务 ==="
+        # 只构建主要的 UZonMailService
         if [ -f "UZonMailService/UZonMailService.csproj" ]; then
-          dotnet build "UZonMailService/UZonMailService.csproj" --configuration Release --verbosity normal || echo "主服务构建失败"
+          dotnet publish "UZonMailService/UZonMailService.csproj" -c Release -o "../build/service-linux-x64" -r linux-x64 --self-contained false
+          echo "主服务构建完成"
         else
           echo "未找到 UZonMailService 项目"
         fi
 
-    - name: Create simplified build script using heredoc
+    - name: Build frontend
+      working-directory: ./ui-src
       run: |
-        echo "=== 使用 heredoc 创建简化构建脚本 ==="
-        cat > scripts/build-simplified.ps1 << 'EOF'
-# 简化的构建脚本 - 跳过有问题的插件
-param(
-    [string]$platform = "linux",
-    [bool]$desktop = $false,
-    [bool]$rebuildFrontend = $true,
-    [bool]$docker = $false
-)
+        echo "=== 构建前端 ==="
+        yarn build
+        echo "前端构建完成"
 
-$publishPlatform = "linux-x64"
-$env:ASPNETCORE_ENVIRONMENT = "Production"
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-
-# 检测环境
-Write-Host "开始检测环境..." -ForegroundColor Yellow
-
-# 基本环境检测
-if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
-    Write-Host "请先安装 yarn 环境！" -ForegroundColor Red
-    return
-}
-Write-Host "yarn 环境检测通过！" -ForegroundColor Green
-
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "请先安装 node 环境！" -ForegroundColor Red
-    return
-}
-Write-Host "node 环境检测通过！" -ForegroundColor Green
-
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Write-Host "请先安装 dotnet 环境！" -ForegroundColor Red
-    return
-}
-Write-Host "dotnet 环境检测通过！" -ForegroundColor Green
-
-if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
-    Write-Host "7z 未安装，请安装 p7zip-full" -ForegroundColor Red
-    return
-}
-Write-Host "7z 环境检测通过！" -ForegroundColor Green
-
-# 找到 git 的根目录
-$gitRoot = $PWD
-Write-Host "使用当前目录作为根目录: $gitRoot" -ForegroundColor Yellow
-
-# 编译前端
-Write-Host "前端编译中..." -ForegroundColor Yellow    
-$uiSrc = Join-Path -Path $gitRoot -ChildPath "ui-src"
-Set-Location -Path $uiSrc
-yarn install
-yarn build
-Write-Host "前端编译完成！" -ForegroundColor Green
-
-# 编译后端 UZonMailService
-Write-Host "开始编译后端 UZonMailService ..." -ForegroundColor Yellow
-$backendSrc = Join-Path -Path $gitRoot -ChildPath "backend-src"
-$serviceSrc = Join-Path -Path $backendSrc -ChildPath "UZonMailService"
-
-Set-Location -Path $serviceSrc
-$mainService = "$gitRoot/build/service-$publishPlatform"
-
-# 先清空
-if (Test-Path -Path $mainService -PathType Container) {
-    Remove-Item -Path $mainService -Recurse -Force
-}
-New-Item -Path $mainService -ItemType Directory -Force
-
-$serviceDest = $mainService
-dotnet publish -c Release -o $serviceDest -r $publishPlatform --self-contained false
-
-# 创建必要的目录
-New-Item -Path "$serviceDest/public" -ItemType Directory -Force
-New-Item -Path "$serviceDest/wwwroot" -ItemType Directory -Force
-New-Item -Path "$serviceDest/Plugins" -ItemType Directory -Force
-New-Item -Path "$serviceDest/Assembly" -ItemType Directory -Force
-
-# 删除开发配置文件
-$developSettingPath = Join-Path -Path $serviceDest -ChildPath "appsettings.Development.json"
-if (Test-Path -Path $developSettingPath -PathType Leaf) {
-    Remove-Item -Path $developSettingPath -Force
-}
-
-# 复制 Quartz/quartz-sqlite.sqlite3 到 data/db 目录中
-New-Item -Path "$serviceDest/data/db" -ItemType Directory  -ErrorAction SilentlyContinue
-Copy-Item -Path "$serviceSrc/Quartz/quartz-sqlite.sqlite3" -Destination "$serviceDest/data/db/quartz-sqlite.sqlite3" -Force
-
-# 复制脚本文件
-$scriptFiles = @("Dockerfile", "docker-compose.yml")
-foreach ($file in $scriptFiles) {
-    Copy-Item -Path "$gitRoot/scripts/$file" -Destination $mainService -Force
-}
-
-Write-Host "后端 UZonMailService 编译完成!" -ForegroundColor Green
-
-# 复制前端编译结果到服务端指定位置
-$serviceWwwroot = Join-Path -Path $mainService -ChildPath "wwwroot"
-if (-not (Test-Path -Path $serviceWwwroot -PathType Container)) {
-    New-Item -Path $serviceWwwroot -ItemType Directory -Force
-}
-Copy-Item -Path $uiSrc/dist/spa/* -Destination $serviceWwwroot -Recurse -Force
-
-# 打包文件
-$zipDest = Join-Path -Path $gitRoot -ChildPath "build/uzonmail-service-$publishPlatform-simplified.zip"
-7z a -tzip $zipDest "$mainService/*"
-
-Write-Host "简化版编译完成：$zipDest" -ForegroundColor Green
-return $zipDest
-EOF
-        echo "✓ 已创建简化构建脚本"
-
-    - name: Build Linux Server with simplified script
-      working-directory: ./scripts
-      shell: pwsh
+    - name: Create package structure
       run: |
-        Write-Host "=== 使用简化脚本构建 Linux 版本 ==="
-        Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+        echo "=== 创建打包结构 ==="
+        mkdir -p build/uzonmail-package
         
-        Write-Host "=== Testing 7z access ==="
-        $7zResult = Get-Command "7z" -ErrorAction SilentlyContinue
-        if ($7zResult) {
-            Write-Host "✓ 7z found at: $($7zResult.Source)"
-            & 7z --version
-        } else {
-            Write-Host "✗ 7z not found"
-        }
+        # 复制服务端文件
+        if [ -d "build/service-linux-x64" ]; then
+          cp -r build/service-linux-x64/* build/uzonmail-package/
+        fi
         
-        Write-Host "=== Running simplified build script ==="
-        try {
-            ./build-simplified.ps1
-            Write-Host "✓ Build completed successfully"
-        } catch {
-            Write-Host "✗ Build failed: $($_.Exception.Message)"
-            Write-Host "Error details: $($_.Exception.StackTrace)"
-            # 即使失败也继续
-            Write-Host "继续执行以检查部分构建结果..."
-        }
+        # 复制前端文件
+        if [ -d "ui-src/dist/spa" ]; then
+          mkdir -p build/uzonmail-package/wwwroot
+          cp -r ui-src/dist/spa/* build/uzonmail-package/wwwroot/
+        fi
+        
+        # 复制必要的脚本文件
+        if [ -f "scripts/docker-deploy.sh" ]; then
+          cp scripts/docker-deploy.sh build/uzonmail-package/
+        fi
+        if [ -f "scripts/docker-compose.yml" ]; then
+          cp scripts/docker-compose.yml build/uzonmail-package/
+        fi
+        
+        echo "打包结构创建完成"
 
-    - name: Check build results even if failed
-      if: always()
+    - name: Create zip package
       run: |
-        echo "=== 检查构建结果（即使构建失败）==="
+        echo "=== 创建 ZIP 包 ==="
+        cd build/uzonmail-package
+        7z a -tzip ../uzonmail-linux-x64-simple.zip *
+        cd ../..
+        echo "ZIP 包创建完成"
+
+    - name: Check build results
+      run: |
+        echo "=== 检查构建结果 ==="
         if [ -d "build" ]; then
           echo "Build directory exists"
           ls -la build/
@@ -360,39 +218,15 @@ EOF
           done
         else
           echo "Build directory not found"
-          echo "=== 当前目录结构 ==="
-          ls -la
-          echo "=== 搜索可能的构建产物 ==="
-          find . -name "*.zip" -type f 2>/dev/null | head -20 || echo "No zip files found"
-          find . -name "*.tar.gz" -type f 2>/dev/null | head -20 || echo "No tar.gz files found"
-        fi
-
-    - name: Create minimal build artifact if none exists
-      if: always()
-      run: |
-        echo "=== 创建最小构建产物（如果没有）==="
-        if [ ! -d "build" ] || [ -z "$(find build/ -type f -name '*.zip' 2>/dev/null)" ]; then
-          echo "没有构建产物，创建最小构建结构"
-          mkdir -p build/minimal
-          echo "UZonMail Linux Build (Placeholder)" > build/minimal/README.txt
-          echo "This is a placeholder build artifact. The actual build failed due to missing dependencies." >> build/minimal/README.txt
-          cd build && zip -r uzonmail-linux-x64-minimal.zip minimal/ && cd ..
-          echo "创建了最小构建产物"
-          ls -la build/*.zip
-        else
-          echo "已找到构建产物:"
-          find build/ -name "*.zip" -type f 2>/dev/null
         fi
 
     - name: Upload Linux Server Artifact
-      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-server-linux
         path: |
-          build/
+          build/uzonmail-linux-x64-*.zip
           build/*.zip
-          build/*.tar.gz
         retention-days: 30
         if-no-files-found: warn
 
