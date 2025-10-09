@@ -205,12 +205,10 @@ jobs:
           echo "未找到 UZonMailService 项目"
         fi
 
-    - name: Create simplified build script
-      shell: pwsh
+    - name: Create simplified build script using heredoc
       run: |
-        Write-Host "=== 创建简化的构建脚本 ==="
-        # 创建一个简化的构建脚本，跳过有问题的插件
-        $simplifiedScript = @'
+        echo "=== 使用 heredoc 创建简化构建脚本 ==="
+        cat > scripts/build-simplified.ps1 << 'EOF'
 # 简化的构建脚本 - 跳过有问题的插件
 param(
     [string]$platform = "linux",
@@ -318,10 +316,8 @@ $zipDest = Join-Path -Path $gitRoot -ChildPath "build/uzonmail-service-$publishP
 
 Write-Host "简化版编译完成：$zipDest" -ForegroundColor Green
 return $zipDest
-'@
-
-        Set-Content -Path "scripts/build-simplified.ps1" -Value $simplifiedScript
-        Write-Host "✓ 已创建简化构建脚本"
+EOF
+        echo "✓ 已创建简化构建脚本"
 
     - name: Build Linux Server with simplified script
       working-directory: ./scripts
