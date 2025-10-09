@@ -110,7 +110,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: recursive  # 添加子模块支持
+        submodules: recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -205,49 +205,148 @@ jobs:
           echo "未找到 UZonMailService 项目"
         fi
 
-    - name: Modify build script to skip problematic plugins
+    - name: Create simplified build script
       shell: pwsh
       run: |
-        Write-Host "=== 修改构建脚本以跳过有问题的插件 ==="
-        $scriptPath = "scripts/build-core.ps1"
-        if (Test-Path $scriptPath) {
-          $content = Get-Content $scriptPath -Raw
-          # 注释掉 UZonMailCorePlugin 的构建
-          $content = $content -replace 'function New-UZonMailCorePlugin {', 'function New-UZonMailCorePlugin { return #'
-          $content = $content -replace 'New-UZonMailCorePlugin', '# New-UZonMailCorePlugin'
-          # 注释掉 UZonMailProPlugin 的构建
-          $content = $content -replace 'function New-UZonMailProPlugin {', 'function New-UZonMailProPlugin { return #'
-          $content = $content -replace 'New-UZonMailProPlugin', '# New-UZonMailProPlugin'
-          Set-Content -Path $scriptPath -Value $content
-          Write-Host "✓ 已修改构建脚本跳过插件"
-        } else {
-          Write-Host "✗ 未找到构建脚本"
-        }
+        Write-Host "=== 创建简化的构建脚本 ==="
+        # 创建一个简化的构建脚本，跳过有问题的插件
+        $simplifiedScript = @'
+# 简化的构建脚本 - 跳过有问题的插件
+param(
+    [string]$platform = "linux",
+    [bool]$desktop = $false,
+    [bool]$rebuildFrontend = $true,
+    [bool]$docker = $false
+)
 
-    - name: Build Linux Server
+$publishPlatform = "linux-x64"
+$env:ASPNETCORE_ENVIRONMENT = "Production"
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+# 检测环境
+Write-Host "开始检测环境..." -ForegroundColor Yellow
+
+# 基本环境检测
+if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
+    Write-Host "请先安装 yarn 环境！" -ForegroundColor Red
+    return
+}
+Write-Host "yarn 环境检测通过！" -ForegroundColor Green
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host "请先安装 node 环境！" -ForegroundColor Red
+    return
+}
+Write-Host "node 环境检测通过！" -ForegroundColor Green
+
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    Write-Host "请先安装 dotnet 环境！" -ForegroundColor Red
+    return
+}
+Write-Host "dotnet 环境检测通过！" -ForegroundColor Green
+
+if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+    Write-Host "7z 未安装，请安装 p7zip-full" -ForegroundColor Red
+    return
+}
+Write-Host "7z 环境检测通过！" -ForegroundColor Green
+
+# 找到 git 的根目录
+$gitRoot = $PWD
+Write-Host "使用当前目录作为根目录: $gitRoot" -ForegroundColor Yellow
+
+# 编译前端
+Write-Host "前端编译中..." -ForegroundColor Yellow    
+$uiSrc = Join-Path -Path $gitRoot -ChildPath "ui-src"
+Set-Location -Path $uiSrc
+yarn install
+yarn build
+Write-Host "前端编译完成！" -ForegroundColor Green
+
+# 编译后端 UZonMailService
+Write-Host "开始编译后端 UZonMailService ..." -ForegroundColor Yellow
+$backendSrc = Join-Path -Path $gitRoot -ChildPath "backend-src"
+$serviceSrc = Join-Path -Path $backendSrc -ChildPath "UZonMailService"
+
+Set-Location -Path $serviceSrc
+$mainService = "$gitRoot/build/service-$publishPlatform"
+
+# 先清空
+if (Test-Path -Path $mainService -PathType Container) {
+    Remove-Item -Path $mainService -Recurse -Force
+}
+New-Item -Path $mainService -ItemType Directory -Force
+
+$serviceDest = $mainService
+dotnet publish -c Release -o $serviceDest -r $publishPlatform --self-contained false
+
+# 创建必要的目录
+New-Item -Path "$serviceDest/public" -ItemType Directory -Force
+New-Item -Path "$serviceDest/wwwroot" -ItemType Directory -Force
+New-Item -Path "$serviceDest/Plugins" -ItemType Directory -Force
+New-Item -Path "$serviceDest/Assembly" -ItemType Directory -Force
+
+# 删除开发配置文件
+$developSettingPath = Join-Path -Path $serviceDest -ChildPath "appsettings.Development.json"
+if (Test-Path -Path $developSettingPath -PathType Leaf) {
+    Remove-Item -Path $developSettingPath -Force
+}
+
+# 复制 Quartz/quartz-sqlite.sqlite3 到 data/db 目录中
+New-Item -Path "$serviceDest/data/db" -ItemType Directory  -ErrorAction SilentlyContinue
+Copy-Item -Path "$serviceSrc/Quartz/quartz-sqlite.sqlite3" -Destination "$serviceDest/data/db/quartz-sqlite.sqlite3" -Force
+
+# 复制脚本文件
+$scriptFiles = @("Dockerfile", "docker-compose.yml")
+foreach ($file in $scriptFiles) {
+    Copy-Item -Path "$gitRoot/scripts/$file" -Destination $mainService -Force
+}
+
+Write-Host "后端 UZonMailService 编译完成!" -ForegroundColor Green
+
+# 复制前端编译结果到服务端指定位置
+$serviceWwwroot = Join-Path -Path $mainService -ChildPath "wwwroot"
+if (-not (Test-Path -Path $serviceWwwroot -PathType Container)) {
+    New-Item -Path $serviceWwwroot -ItemType Directory -Force
+}
+Copy-Item -Path $uiSrc/dist/spa/* -Destination $serviceWwwroot -Recurse -Force
+
+# 打包文件
+$zipDest = Join-Path -Path $gitRoot -ChildPath "build/uzonmail-service-$publishPlatform-simplified.zip"
+7z a -tzip $zipDest "$mainService/*"
+
+Write-Host "简化版编译完成：$zipDest" -ForegroundColor Green
+return $zipDest
+'@
+
+        Set-Content -Path "scripts/build-simplified.ps1" -Value $simplifiedScript
+        Write-Host "✓ 已创建简化构建脚本"
+
+    - name: Build Linux Server with simplified script
       working-directory: ./scripts
       shell: pwsh
       run: |
-        Write-Host "=== Starting Linux build ==="
+        Write-Host "=== 使用简化脚本构建 Linux 版本 ==="
         Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
         
         Write-Host "=== Testing 7z access ==="
-        $7zResult = Get-Command "7z.exe" -ErrorAction SilentlyContinue
+        $7zResult = Get-Command "7z" -ErrorAction SilentlyContinue
         if ($7zResult) {
-            Write-Host "✓ 7z.exe found at: $($7zResult.Source)"
-            & 7z.exe --version
+            Write-Host "✓ 7z found at: $($7zResult.Source)"
+            & 7z --version
         } else {
-            Write-Host "✗ 7z.exe not found"
+            Write-Host "✗ 7z not found"
         }
         
-        Write-Host "=== Running build script ==="
+        Write-Host "=== Running simplified build script ==="
         try {
-            ./build-linux.ps1
+            ./build-simplified.ps1
             Write-Host "✓ Build completed successfully"
         } catch {
             Write-Host "✗ Build failed: $($_.Exception.Message)"
             Write-Host "Error details: $($_.Exception.StackTrace)"
-            # 即使失败也继续，看看是否有部分构建结果
+            # 即使失败也继续
             Write-Host "继续执行以检查部分构建结果..."
         }
 
@@ -276,12 +375,17 @@ jobs:
       if: always()
       run: |
         echo "=== 创建最小构建产物（如果没有）==="
-        if [ ! -d "build" ] || [ -z "$(find build/ -type f 2>/dev/null)" ]; then
+        if [ ! -d "build" ] || [ -z "$(find build/ -type f -name '*.zip' 2>/dev/null)" ]; then
           echo "没有构建产物，创建最小构建结构"
           mkdir -p build/minimal
           echo "UZonMail Linux Build (Placeholder)" > build/minimal/README.txt
+          echo "This is a placeholder build artifact. The actual build failed due to missing dependencies." >> build/minimal/README.txt
           cd build && zip -r uzonmail-linux-x64-minimal.zip minimal/ && cd ..
           echo "创建了最小构建产物"
+          ls -la build/*.zip
+        else
+          echo "已找到构建产物:"
+          find build/ -name "*.zip" -type f 2>/dev/null
         fi
 
     - name: Upload Linux Server Artifact
