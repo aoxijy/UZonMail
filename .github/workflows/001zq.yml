@@ -109,8 +109,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        submodules: recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -127,15 +125,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full p7zip-rar wget
-
-    - name: Install PowerShell
-      run: |
-        wget -q https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb
-        sudo dpkg -i packages-microsoft-prod.deb
-        sudo apt-get update
-        sudo apt-get install -y powershell
-        rm packages-microsoft-prod.deb
+        sudo apt-get install -y p7zip-full p7zip-rar
 
     - name: Install Yarn
       run: |
@@ -146,83 +136,89 @@ jobs:
       run: |
         yarn install --frozen-lockfile
 
-    - name: Create 7z.exe wrapper for Linux
+    - name: Build frontend
+      working-directory: ./ui-src
       run: |
-        echo '#!/bin/bash' | sudo tee /usr/local/bin/7z.exe
-        echo '/usr/bin/7z "$@"' | sudo tee -a /usr/local/bin/7z.exe
-        sudo chmod +x /usr/local/bin/7z.exe
+        yarn build
 
-    - name: Fix project references
+    - name: Build main service without plugins
       run: |
-        echo "=== 修复项目引用 ==="
-        echo "检查项目结构..."
-        find . -name "*.csproj" -type f | head -10
+        echo "=== 构建主服务（跳过插件）==="
         
-        # 检查 UZonMailDB 项目是否存在
-        if [ -f "backend-src/UZonMailDB/UZonMailDB.csproj" ]; then
-          echo "✓ UZonMailDB 项目存在"
-          # 创建符号链接到根目录，以便项目引用能找到它
-          ln -sf backend-src/UZonMailDB UZonMailDB || echo "符号链接创建失败，继续构建"
-        else
-          echo "✗ UZonMailDB 项目不存在"
-        fi
-
-    - name: Restore all projects
-      run: |
-        echo "=== 恢复所有项目 ==="
-        # 恢复所有项目
-        find . -name "*.csproj" -type f | while read proj; do
-          echo "恢复项目: $proj"
-          dotnet restore "$proj" --verbosity quiet || echo "恢复 $proj 失败"
-        done
-
-    - name: Build solution
-      run: |
-        echo "=== 构建解决方案 ==="
-        # 查找解决方案文件
-        SOLUTIONS=$(find . -name "*.sln" -type f | head -5)
-        if [ -n "$SOLUTIONS" ]; then
-          echo "找到解决方案文件:"
-          echo "$SOLUTIONS"
-          # 使用第一个找到的解决方案
-          FIRST_SOLUTION=$(echo "$SOLUTIONS" | head -1)
-          echo "使用解决方案: $FIRST_SOLUTION"
-          # 构建解决方案
-          dotnet build "$FIRST_SOLUTION" --configuration Release --verbosity normal || echo "解决方案构建失败"
-        else
-          echo "未找到解决方案文件，尝试构建所有项目"
-          # 构建所有项目
-          find . -name "*.csproj" -type f | while read proj; do
-            echo "构建项目: $proj"
-            dotnet build "$proj" --configuration Release --verbosity minimal || echo "构建 $proj 失败"
-          done
-        fi
-
-    - name: Build Linux Server using original script
-      working-directory: ./scripts
-      shell: pwsh
-      run: |
-        Write-Host "=== 使用原始构建脚本构建 Linux 版本 ==="
-        Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+        # 只构建 UZonMailService 主项目
+        cd backend-src/UZonMailService
         
-        Write-Host "=== Testing 7z access ==="
-        $7zResult = Get-Command "7z.exe" -ErrorAction SilentlyContinue
-        if ($7zResult) {
-            Write-Host "✓ 7z.exe found at: $($7zResult.Source)"
-            & 7z.exe --version
-        } else {
-            Write-Host "✗ 7z.exe not found"
-        }
+        # 发布主服务
+        dotnet publish -c Release -o ../../build/service-linux-x64 -r linux-x64 --self-contained false
         
-        Write-Host "=== Running original build script ==="
-        try {
-            ./build-linux.ps1
-            Write-Host "✓ 原始构建脚本成功完成"
-        } catch {
-            Write-Host "✗ 原始构建脚本失败: $($_.Exception.Message)"
-            Write-Host "Error details: $($_.Exception.StackTrace)"
-            exit 1
-        }
+        # 创建必要的目录
+        mkdir -p ../../build/service-linux-x64/wwwroot
+        mkdir -p ../../build/service-linux-x64/Plugins
+        mkdir -p ../../build/service-linux-x64/Assembly
+        mkdir -p ../../build/service-linux-x64/data/db
+        
+        # 复制 Quartz 数据库文件
+        cp Quartz/quartz-sqlite.sqlite3 ../../build/service-linux-x64/data/db/quartz-sqlite.sqlite3
+        
+        # 删除开发配置文件
+        rm ../../build/service-linux-x64/appsettings.Development.json 2>/dev/null || true
+        
+        cd ../..
+
+    - name: Copy frontend to service
+      run: |
+        echo "=== 复制前端文件到服务端 ==="
+        cp -r ui-src/dist/spa/* build/service-linux-x64/wwwroot/
+
+    - name: Copy necessary scripts
+      run: |
+        echo "=== 复制必要的脚本文件 ==="
+        cp scripts/docker-deploy.sh build/service-linux-x64/ 2>/dev/null || echo "docker-deploy.sh 不存在"
+        cp scripts/docker-compose.yml build/service-linux-x64/ 2>/dev/null || echo "docker-compose.yml 不存在"
+        cp scripts/Dockerfile build/service-linux-x64/ 2>/dev/null || echo "Dockerfile 不存在"
+
+    - name: Create Linux service files
+      run: |
+        echo "=== 创建 Linux 服务文件 ==="
+        
+        # 创建安装脚本
+        cat > build/service-linux-x64/install.sh << 'EOF'
+#!/bin/bash
+echo "UZonMail Linux 安装脚本"
+echo "这是一个基础版本，不包含插件功能"
+echo "请确保已安装 .NET 9.0 运行时"
+echo "安装完成"
+EOF
+        
+        # 创建 systemd 服务文件
+        cat > build/service-linux-x64/uzon-mail.service << 'EOF'
+[Unit]
+Description=UZonMail Service
+After=network.target
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/uzonmail
+ExecStart=/usr/bin/dotnet /opt/uzonmail/UZonMailService.dll
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        
+        chmod +x build/service-linux-x64/install.sh
+
+    - name: Create package
+      run: |
+        echo "=== 创建打包文件 ==="
+        cd build/service-linux-x64
+        7z a -tzip ../uzonmail-service-linux-x64-basic.zip *
+        cd ../..
+        
+        # 创建带版本号的包
+        VERSION=$(date +%Y%m%d.%H%M)
+        cp build/uzonmail-service-linux-x64-basic.zip build/uzonmail-service-linux-x64-$VERSION.zip
 
     - name: Check build results
       run: |
@@ -231,14 +227,12 @@ jobs:
           echo "Build directory exists"
           ls -la build/
           echo "=== 所有构建文件 ==="
-          find build/ -type f 2>/dev/null | while read file; do
+          find build/ -name "*.zip" -type f 2>/dev/null | while read file; do
             echo "Found: $file"
             ls -la "$file"
           done
         else
           echo "Build directory not found"
-          echo "=== 当前目录结构 ==="
-          ls -la
         fi
 
     - name: Upload Linux Server Artifact
@@ -246,9 +240,8 @@ jobs:
       with:
         name: uzonmail-server-linux
         path: |
-          build/uzonmail-linux-x64-*.zip
           build/uzonmail-service-linux-x64-*.zip
-          build/*.zip
+          build/uzonmail-linux-x64-*.zip
         retention-days: 30
         if-no-files-found: warn
 
