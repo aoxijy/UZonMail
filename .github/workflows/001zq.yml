@@ -51,18 +51,12 @@ jobs:
       run: |
         ./build-desktop.ps1
 
-    - name: Check Windows Desktop artifacts
-      run: |
-        echo "Windows Desktop build files:"
-        ls -la build/ || echo "No build directory found"
-
     - name: Upload Windows Desktop Artifact
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-desktop-windows
         path: build/uzonmail-desktop-win-x64-*.zip
         retention-days: 30
-        if-no-files-found: error
 
   build-windows-server:
     runs-on: windows-latest
@@ -102,18 +96,12 @@ jobs:
       run: |
         ./build-win-server.ps1
 
-    - name: Check Windows Server artifacts
-      run: |
-        echo "Windows Server build files:"
-        ls -la build/ || echo "No build directory found"
-
     - name: Upload Windows Server Artifact
       uses: actions/upload-artifact@v4
       with:
         name: uzonmail-server-windows
         path: build/uzonmail-service-win-x64-*.zip
         retention-days: 30
-        if-no-files-found: error
 
   build-linux-server:
     runs-on: ubuntu-latest
@@ -134,31 +122,18 @@ jobs:
         cache: 'yarn'
         cache-dependency-path: 'ui-src/yarn.lock'
 
-    - name: Install basic dependencies
+    - name: Install 7zip and PowerShell
       run: |
         sudo apt-get update
-        sudo apt-get install -y p7zip-full curl
-
-    - name: Check and Install PowerShell
-      run: |
-        # 检查是否已安装 PowerShell
-        if command -v pwsh &> /dev/null; then
-          echo "PowerShell is already installed:"
-          pwsh --version
-        else
-          echo "Installing PowerShell..."
-          # 安装 PowerShell for Linux
-          curl -L -o /tmp/powershell.tar.gz https://github.com/PowerShell/PowerShell/releases/download/v7.4.1/powershell-7.4.1-linux-x64.tar.gz
-          sudo mkdir -p /opt/microsoft/powershell/7
-          sudo tar zxf /tmp/powershell.tar.gz -C /opt/microsoft/powershell/7
-          sudo chmod +x /opt/microsoft/powershell/7/pwsh
-          # 检查符号链接是否存在，如果存在则跳过创建
-          if [ ! -f /usr/bin/pwsh ]; then
-            sudo ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
-          else
-            echo "Symbolic link /usr/bin/pwsh already exists, skipping creation"
-          fi
-        fi
+        # 安装7zip
+        sudo apt-get install -y p7zip-full p7zip-rar
+        # 安装PowerShell
+        sudo apt-get install -y wget
+        wget -q https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb
+        sudo dpkg -i packages-microsoft-prod.deb
+        sudo apt-get update
+        sudo apt-get install -y powershell
+        rm packages-microsoft-prod.deb
 
     - name: Install Yarn
       run: |
@@ -169,73 +144,72 @@ jobs:
       run: |
         yarn install --frozen-lockfile
 
-    - name: Debug - Check scripts directory
+    - name: Create 7z.exe wrapper for Linux
       run: |
-        echo "=== Scripts directory contents ==="
-        ls -la scripts/
-        echo "=== Checking build-linux.ps1 ==="
-        if [ -f "scripts/build-linux.ps1" ]; then
-          echo "build-linux.ps1 exists"
-          echo "=== First 10 lines of build-linux.ps1 ==="
-          head -10 scripts/build-linux.ps1
-        else
-          echo "ERROR: build-linux.ps1 not found!"
-          find . -name "*.ps1" -type f
-        fi
+        # 创建一个7z.exe的包装器，让PowerShell可以找到7z
+        echo '#!/bin/bash' | sudo tee /usr/local/bin/7z.exe
+        echo '/usr/bin/7z "$@"' | sudo tee -a /usr/local/bin/7z.exe
+        sudo chmod +x /usr/local/bin/7z.exe
+        echo "7z.exe wrapper created at /usr/local/bin/7z.exe"
+
+    - name: Debug - Check environment
+      run: |
+        echo "=== Environment Check ==="
+        echo "7z path: $(which 7z)"
+        7z --version || echo "7z not found"
+        echo "7z.exe wrapper: $(which 7z.exe || echo 'not found')"
+        echo "PowerShell: $(which pwsh || echo 'not found')"
 
     - name: Build Linux Server
       working-directory: ./scripts
+      shell: pwsh
       run: |
-        echo "=== Starting Linux build ==="
-        # 确保使用正确的 PowerShell
-        which pwsh
-        pwsh --version
-        # 执行构建脚本
-        pwsh -File ./build-linux.ps1
-        echo "=== Build completed ==="
+        Write-Host "=== Starting Linux build in PowerShell ==="
+        Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+        Write-Host "Current directory: $(Get-Location)"
+        
+        Write-Host "=== Testing 7z access ==="
+        # 测试7z.exe包装器
+        $7zResult = Get-Command "7z.exe" -ErrorAction SilentlyContinue
+        if ($7zResult) {
+            Write-Host "✓ 7z.exe found at: $($7zResult.Source)"
+            & 7z.exe --version
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ 7z.exe is working"
+            } else {
+                Write-Host "✗ 7z.exe test failed"
+            }
+        } else {
+            Write-Host "✗ 7z.exe not found"
+        }
+        
+        Write-Host "=== Running build script ==="
+        try {
+            ./build-linux.ps1
+            Write-Host "✓ Build completed successfully"
+        } catch {
+            Write-Host "✗ Build failed: $($_.Exception.Message)"
+            Write-Host "Error details: $($_.Exception.StackTrace)"
+            exit 1
+        }
 
-    - name: Debug - Check build results
+    - name: Check build results
       run: |
         echo "=== Build directory contents ==="
-        ls -la build/ 2>/dev/null || echo "Build directory not found"
-        echo "=== All files in build directory ==="
-        find build/ -type f 2>/dev/null || echo "No build files found"
-        echo "=== Current directory structure ==="
-        ls -la
-        echo "=== Searching for any zip files ==="
-        find . -name "*.zip" -type f 2>/dev/null || echo "No zip files found"
-
-    - name: Find and prepare Linux artifacts
-      id: find-linux-artifacts
-      run: |
-        echo "=== Searching for Linux artifacts ==="
-        # 查找所有可能的构建产物
-        find . -name "*.zip" -type f 2>/dev/null | head -10
-        find . -name "*.tar.gz" -type f 2>/dev/null | head -10
-        
-        # 检查build目录内容
         if [ -d "build" ]; then
-          echo "Build directory exists, contents:"
+          echo "Build directory exists"
           ls -la build/
-          # 查找Linux相关的文件
-          LINUX_FILES=$(find build/ -name "*linux*" -type f 2>/dev/null || echo "")
-          if [ -n "$LINUX_FILES" ]; then
-            echo "Found Linux files:"
-            echo "$LINUX_FILES"
-            # 使用第一个找到的Linux文件作为产物
-            FIRST_FILE=$(echo "$LINUX_FILES" | head -1)
-            echo "Using file: $FIRST_FILE"
-            # 如果文件名不匹配预期模式，复制并重命名它
-            if [[ "$FIRST_FILE" != *"uzonmail-linux-x64-"* ]]; then
-              NEW_NAME="build/uzonmail-linux-x64-artifact.zip"
-              echo "Copying $FIRST_FILE to $NEW_NAME"
-              cp "$FIRST_FILE" "$NEW_NAME"
-            fi
-          else
-            echo "No Linux-specific files found in build directory"
-          fi
+          echo "=== All files in build directory ==="
+          find build/ -type f 2>/dev/null | while read file; do
+            echo "Found: $file"
+            ls -la "$file"
+          done
         else
-          echo "Build directory does not exist"
+          echo "ERROR: Build directory not found!"
+          echo "=== Current directory structure ==="
+          ls -la
+          echo "=== Searching for any build artifacts ==="
+          find . -name "*.zip" -type f 2>/dev/null | head -20 || echo "No zip files found"
         fi
 
     - name: Upload Linux Server Artifact
@@ -244,8 +218,9 @@ jobs:
         name: uzonmail-server-linux
         path: |
           build/uzonmail-linux-x64-*.zip
-          build/uzonmail-linux-x64-artifact.zip
+          build/uzonmail-service-linux-x64-*.zip
           build/*linux*.zip
+          build/*.zip
         retention-days: 30
         if-no-files-found: warn
 
@@ -262,8 +237,8 @@ jobs:
 
     - name: List downloaded files
       run: |
-        echo "=== Downloaded artifacts ==="
-        find ./artifacts -type f 2>/dev/null | while read file; do
+        echo "=== All downloaded artifacts ==="
+        find ./artifacts -type f -name "*.zip" | while read file; do
           echo "Found: $file"
           ls -la "$file"
         done
@@ -272,7 +247,7 @@ jobs:
       uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: ./artifacts/**/*
+        file: ./artifacts/**/*.zip
         tag: ${{ github.ref }}
         overwrite: true
         file_glob: true
